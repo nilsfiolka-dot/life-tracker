@@ -1,4 +1,4 @@
-import type { DailyLogRecord } from '../src/lib/supabaseClient';
+import type { DailyLogRecord } from './lib/supabaseClient';
 
 function scoreOf(entry: DailyLogRecord) {
   return (entry.survive ? 300 : 0) + (entry.assist ? 200 : 0) + (entry.kill ? 500 : entry.trade ? 250 : 0);

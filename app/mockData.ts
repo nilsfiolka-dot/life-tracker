@@ -1,4 +1,4 @@
-import type { DailyLogRecord } from '../src/lib/supabaseClient';
+import type { DailyLogRecord } from './lib/supabaseClient';
 
 // Einfacher seeded PRNG, damit die Demo-Daten bei jedem Rendern
 // (und bei jedem Nutzer) gleich aussehen statt zu flackern.

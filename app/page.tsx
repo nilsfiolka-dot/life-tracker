@@ -1,369 +1,377 @@
 'use client';
 
-import { type FormEvent, useMemo, useState } from 'react';
-import { isSupabaseConfigured, logDailyMatch } from '../src/lib/supabaseClient';
+import { useEffect, useMemo, useState } from 'react';
 import {
-  lifeRankMock,
-  sportMock,
-  uniMock,
-  sidehustleMock,
-  trackerScoreMock,
-  sessionLogMock,
-  type DomainMock,
-  type SessionLogEntry,
-} from './dashboardMock';
-import { getRankForScore, getRankProgress } from './rank';
-import RankBadge from './RankBadge';
-import { IconDumbbell, IconBook, IconBriefcase } from './domain-icons';
+  fetchWellbeingLogs,
+  goodHabitsCount,
+  isBadHabitDay,
+  logWellbeing,
+  SOCIAL_MEDIA_BAD_HABIT_THRESHOLD,
+  type WellbeingLogRecord,
+} from './lib/wellbeingClient';
+import { generateMockWellbeingLogs } from './lib/wellbeingMock';
+import { isSupabaseConfigured } from './lib/supabaseClient';
+import { sportMock, uniMock, sidehustleMock } from './dashboardMock';
+import CombinedTrendChart, { type TrendMetricConfig } from './components/CombinedTrendChart';
+import DomainCard from './components/DomainCard';
+import WellbeingRow from './components/WellbeingRow';
+import { IconDumbbell, IconBook, IconBriefcase } from './components/domain-icons';
 
-type HabitState = {
-  survive: boolean;
-  assist: boolean;
-  kill: boolean;
-  trade: boolean;
+interface FormState {
+  sleepHours: number;
+  didSport: boolean;
+  deepWork: boolean;
+  wasCreative: boolean;
+  didRead: boolean;
+  socialMediaHours: number;
+  mood: number;
+}
+
+const DEFAULT_FORM: FormState = {
+  sleepHours: 7,
+  didSport: false,
+  deepWork: false,
+  wasCreative: false,
+  didRead: false,
+  socialMediaHours: 1,
+  mood: 5,
 };
 
-type HabitConfig = {
-  id: keyof HabitState;
-  label: string;
-  desc: string;
-};
+const DAYS_BACK = 20;
 
-const TONE_COLOR: Record<SessionLogEntry['tone'], string> = {
-  great: '#22c55e',
-  good: '#38bdf8',
-  ok: '#f2c94c',
-  low: '#64748b',
-};
-
-// Tracker Score läuft 0–1000, die Rang-Schwellen in lib/rank.ts sind auf
-// den größeren Score der Match-Tracker-Seite ausgelegt (bis ~28000).
-// Hochskalieren, damit dieselben Rang-Farben/Stufen wiederverwendet werden können.
-const RANK_SCALE = 28;
-
-const renderMetric = (metric: { label: string; value: string; help?: string; trend?: string }, accent: string) => (
-  <div key={`${metric.label}-${metric.value}`} className="relative overflow-hidden rounded-3xl border border-slate-800 bg-slate-950 p-4">
-    <div className="absolute inset-x-0 top-0 h-0.5" style={{ backgroundColor: accent }} />
-    <div className="flex items-center justify-between gap-4">
-      <p className="text-xs uppercase tracking-[0.24em] text-slate-400">{metric.label}</p>
-      {metric.trend ? (
-        <span className="rounded-full bg-emerald-500/10 px-2 py-1 text-[11px] font-semibold text-emerald-300">{metric.trend}</span>
-      ) : null}
-    </div>
-    <p className="mt-3 text-lg font-semibold text-white">{metric.value}</p>
-    {metric.help ? <p className="mt-2 text-xs text-slate-500">{metric.help}</p> : null}
-  </div>
-);
-
-const renderDomainCard = (domain: DomainMock, icon: React.ReactNode, badgeClass: string) => (
-  <div className="rounded-[32px] border border-slate-800 bg-slate-900 p-6 shadow-xl">
-    <div className="mb-4 flex items-center justify-between gap-4">
-      <div className="flex items-center gap-3">
-        <span
-          className="flex h-9 w-9 items-center justify-center rounded-xl"
-          style={{ color: domain.accent, backgroundColor: `${domain.accent}1a` }}
-        >
-          {icon}
-        </span>
-        <div>
-          <p className="text-xs uppercase tracking-[0.24em] text-slate-400">{domain.title}</p>
-        </div>
-      </div>
-      <div className={`rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-[0.25em] ${badgeClass}`}>
-        {domain.scoreLabel}
-      </div>
-    </div>
-    <p className="text-sm text-slate-400">{domain.subtitle}</p>
-    <div className="mt-6 grid gap-4 sm:grid-cols-2">
-      {domain.metrics.map((metric) => renderMetric(metric, domain.accent))}
-    </div>
-    <div
-      className="mt-6 rounded-3xl border p-4 text-sm text-slate-300"
-      style={{ borderColor: `${domain.accent}33`, backgroundColor: `${domain.accent}0d` }}
-    >
-      {domain.highlight}
-    </div>
-  </div>
-);
-
-const formatScore = (value: number) => `${value}/1000`;
-
-export default function DashboardPage() {
-  const [habits, setHabits] = useState<HabitState>({
-    survive: false,
-    assist: false,
-    kill: false,
-    trade: false,
-  });
-  const [loading, setLoading] = useState(false);
+export default function WellbeingPage() {
+  const [logs, setLogs] = useState<WellbeingLogRecord[]>([]);
+  const [loadingLogs, setLoadingLogs] = useState(true);
+  const [form, setForm] = useState<FormState>(DEFAULT_FORM);
+  const [saving, setSaving] = useState(false);
   const [statusMessage, setStatusMessage] = useState('');
-  const [sessionLog, setSessionLog] = useState<SessionLogEntry[]>(sessionLogMock);
 
-  const rank = useMemo(() => getRankForScore(lifeRankMock.score * RANK_SCALE), []);
-  const rankProgress = useMemo(() => getRankProgress(lifeRankMock.score * RANK_SCALE), []);
+  // Korrigiert: State hält das strukturierte AI-Objekt für alle 3 Domänen
+  const [aiDomains, setAiDomains] = useState<any | null>(null);
+  const [loadingAi, setLoadingAi] = useState(false);
 
-  const handleCheckboxChange = (type: keyof HabitState) => {
-    setHabits((prev) => ({ ...prev, [type]: !prev[type] }));
-  };
+  useEffect(() => {
+    const load = async () => {
+      setLoadingLogs(true);
+      const now = new Date();
+      const start = new Date(now);
+      start.setDate(now.getDate() - DAYS_BACK);
+      const toKey = (d: Date) =>
+        `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      const data = await fetchWellbeingLogs(toKey(start), toKey(now));
+      setLogs(data.sort((a, b) => a.log_date.localeCompare(b.log_date)));
+      setLoadingLogs(false);
+    };
+    
+    const loadCachedAiInsights = async () => {
+      try {
+        const res = await fetch('/api/analyze');
+        if (res.ok) {
+          const data = await res.json();
+          // Überprüfen, ob gecashte Objektdaten für die Domänen existieren
+          if (data && data.sport) {
+            setAiDomains(data);
+          }
+        }
+      } catch (err) {
+        console.error('Fehler beim Laden der gespeicherten KI-Insights:', err);
+      }
+    };
 
-  const handleSubmit = async (e: FormEvent<HTMLFormElement>) => {
+    void load();
+    void loadCachedAiInsights();
+  }, []);
+
+  const isDemo = !loadingLogs && logs.length === 0;
+  const displayLogs = useMemo(() => (isDemo ? generateMockWellbeingLogs(DAYS_BACK) : logs), [isDemo, logs]);
+
+  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    setLoading(true);
+    setSaving(true);
     setStatusMessage('');
 
-    const todayLabel = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric' }).format(new Date());
     const todayLocal = new Date().toLocaleDateString('sv');
 
-    const { error } = await logDailyMatch({
+    const payload = {
       log_date: todayLocal,
-      survive: habits.survive,
-      assist: habits.assist,
-      kill: habits.kill,
-      trade: habits.trade,
-    });
+      sleep_hours: form.sleepHours,
+      did_sport: form.didSport,
+      deep_work: form.deepWork,
+      was_creative: form.wasCreative,
+      did_read: form.didRead,
+      social_media_hours: form.socialMediaHours,
+      mood: form.mood,
+    };
 
-    setLoading(false);
+    const { error } = await logWellbeing(payload);
+    setSaving(false);
 
     if (error) {
-      setStatusMessage(`❌ Error logging match: ${error.message}`);
+      setStatusMessage(`Fehler beim Speichern: ${error.message}`);
       return;
     }
 
-    setSessionLog((prev) => [
-      {
-        date: todayLabel,
-        category: 'Life',
-        icon: '⚡',
-        status: 'Erledigt',
-        tag: 'MVP',
-        ratio: '5 / 1',
-        note: 'Tageslog hinzugefügt',
-        tone: 'great',
-      },
-      ...prev.slice(0, 4),
-    ]);
+    setLogs((prev) => {
+      const withoutToday = prev.filter((entry) => entry.log_date !== todayLocal);
+      return [...withoutToday, { ...payload, loggedAt: new Date().toISOString() }].sort((a, b) =>
+        a.log_date.localeCompare(b.log_date),
+      );
+    });
 
-    setHabits({ survive: false, assist: false, kill: false, trade: false });
     setStatusMessage(
-      !isSupabaseConfigured
-        ? '📝 Match performance saved locally. Configure Supabase to sync to your database.'
-        : '🎯 Match performance successfully logged!',
+      isSupabaseConfigured ? 'Eintrag gespeichert.' : 'Lokal gespeichert – Supabase ist noch nicht konfiguriert.',
     );
   };
 
-  const habitConfig: HabitConfig[] = [
-    { id: 'survive', label: 'Survive (S)', desc: 'Hit sleep & hydration baseline (+300)' },
-    { id: 'assist', label: 'Assist (A)', desc: 'Prepped and set up for tomorrow (+200)' },
-    { id: 'kill', label: 'Kill (K)', desc: 'Executed major workout/hustle task (+500)' },
-    { id: 'trade', label: 'Trade (T)', desc: 'Saved a bad day with a fast pivot (+250)' },
-  ];
+  // Verbessert: Fängt nun den exakten Server-Error ab und gibt ihn aus
+  const handleTriggerAnalysis = async () => {
+    setLoadingAi(true);
+    try {
+      const res = await fetch('/api/analyze', { method: 'POST' });
+      const data = await res.json();
+
+      if (res.ok) {
+        if (data && data.sport) {
+          setAiDomains(data);
+          alert('KI-Performance-Analyse erfolgreich aktualisiert! ✨');
+        } else {
+          console.error('Unerwartetes Datenformat vom Server:', data);
+        }
+      } else {
+        // Zeigt das echte Problem im Alert-Fenster an (z.B. "Keine Logdaten im Zeitraum vorhanden")
+        const errMsg = data.error || `Server meldet Status ${res.status}`;
+        console.error('Fehler bei der KI-Generierung:', errMsg);
+        alert(`Analyse fehlgeschlagen: ${errMsg}`);
+      }
+    } catch (err: any) {
+      console.error('Netzwerkfehler bei KI-Analyse:', err);
+      alert(`Netzwerkfehler: ${err.message || err}`);
+    } finally {
+      setLoadingAi(false);
+    }
+  };
+
+  const trendMetrics: TrendMetricConfig[] = useMemo(
+    () => [
+      {
+        key: 'mood',
+        label: 'Mood',
+        color: '#a78bfa',
+        min: 1,
+        max: 10,
+        data: displayLogs.map((e) => ({ date: e.log_date, value: e.mood })),
+      },
+      {
+        key: 'sleep',
+        label: 'Schlaf',
+        color: '#38bdf8',
+        unit: 'h',
+        min: 0,
+        max: 10,
+        data: displayLogs.map((e) => ({ date: e.log_date, value: e.sleep_hours })),
+      },
+      {
+        key: 'habits',
+        label: 'Gute Habits',
+        color: '#22c55e',
+        min: 0,
+        max: 4,
+        data: displayLogs.map((e) => ({ date: e.log_date, value: goodHabitsCount(e) })),
+      },
+      {
+        key: 'social',
+        label: 'Social Media',
+        color: '#f43f5e',
+        unit: 'h',
+        min: 0,
+        max: 8,
+        data: displayLogs.map((e) => ({ date: e.log_date, value: e.social_media_hours })),
+      },
+    ],
+    [displayLogs],
+  );
+
+  const badHabitDays = displayLogs.filter(isBadHabitDay).length;
+  const recentEntries = useMemo(
+    () => [...displayLogs].sort((a, b) => b.log_date.localeCompare(a.log_date)).slice(0, 10),
+    [displayLogs],
+  );
+
+  const isSocialMediaHigh = form.socialMediaHours > SOCIAL_MEDIA_BAD_HABIT_THRESHOLD;
 
   return (
-    <main className="min-h-screen bg-slate-950 p-4 text-slate-100">
-      <div className="mx-auto flex w-full max-w-7xl flex-col gap-6">
-        <section className="grid gap-6 lg:grid-cols-[1.35fr_0.8fr]">
-          <div className="relative overflow-hidden rounded-[32px] border border-slate-800 bg-slate-900 p-8 shadow-xl">
-            <div
-              className="pointer-events-none absolute -right-24 -top-24 h-64 w-64 rounded-full blur-3xl"
-              style={{ backgroundColor: rank.glow }}
-            />
-            <div className="relative flex items-start justify-between gap-6">
-              <div className="flex items-start gap-5">
-                <RankBadge tier={rank} size={72} />
-                <div className="space-y-3">
-                  <p className="text-xs uppercase tracking-[0.3em] text-slate-500">Life Rank</p>
-                  <h1 className="text-4xl font-semibold tracking-tight text-white">{lifeRankMock.current}</h1>
-                  <p className="max-w-xl text-sm text-slate-400">{lifeRankMock.description}</p>
-                  {rankProgress.next && (
-                    <div className="max-w-xs">
-                      <div className="h-1.5 overflow-hidden rounded-full bg-slate-800">
-                        <div
-                          className="h-full rounded-full"
-                          style={{ width: `${rankProgress.progress * 100}%`, backgroundColor: rank.color }}
-                        />
-                      </div>
-                      <p className="mt-1 text-[11px] text-slate-500">Nächste Stufe: {rankProgress.next.name}</p>
-                    </div>
-                  )}
-                </div>
-              </div>
-              <div className="rounded-3xl border border-slate-800 bg-slate-950 p-4 text-right">
-                <p className="text-xs uppercase tracking-[0.3em] text-slate-500">Peak Rating</p>
-                <p className="mt-2 text-2xl font-bold" style={{ color: rank.color }}>
-                  {lifeRankMock.peak}
-                </p>
-                <p className="mt-1 text-xs text-slate-500">Best ever Woche</p>
-              </div>
-            </div>
-
-            <div className="relative mt-8 grid gap-4 sm:grid-cols-2">
-              <div className="rounded-3xl bg-gradient-to-br from-cyan-500/15 to-slate-900 border border-cyan-500/20 p-5 shadow-inner">
-                <p className="text-xs uppercase tracking-[0.24em] text-slate-400">Composite Score</p>
-                <p className="mt-3 text-4xl font-semibold text-white">{formatScore(lifeRankMock.score)}</p>
-                <p className="mt-2 text-sm text-slate-500">{lifeRankMock.progress}</p>
-              </div>
-              <div className="rounded-3xl border border-slate-800 bg-slate-950 p-5">
-                <p className="text-xs uppercase tracking-[0.24em] text-slate-400">Trend</p>
-                <div className="mt-4 flex items-center justify-between gap-3 text-white">
-                  <div>
-                    <p className="text-3xl font-semibold">{lifeRankMock.weeklyScore}</p>
-                    <p className="text-xs text-slate-500">Woche</p>
-                  </div>
-                  <div className="text-right">
-                    <p className="text-3xl font-semibold">{lifeRankMock.monthlyScore}</p>
-                    <p className="text-xs text-slate-500">Monat</p>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div className="space-y-6">
-            <div className="rounded-[28px] border border-slate-800 bg-slate-900 p-6 shadow-xl">
-              <p className="text-xs uppercase tracking-[0.25em] text-slate-400">Tracker Score</p>
-              <p className="mt-4 text-5xl font-semibold text-white">
-                {trackerScoreMock.total}
-                <span className="text-slate-500">/{trackerScoreMock.max}</span>
+    <main className="min-h-screen bg-[#0b0e14] p-4 text-slate-100 sm:p-6">
+      <div className="mx-auto flex w-full max-w-6xl flex-col gap-6">
+        <section className="rounded-2xl border border-slate-800 bg-gradient-to-br from-slate-900 to-slate-950 p-6 shadow-xl">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="text-xs uppercase tracking-[0.25em] text-slate-500">Wellbeing Tracker</p>
+              <h1 className="mt-1 text-2xl font-bold text-white">Mood, Schlaf & Habits im Blick</h1>
+              <p className="mt-1 text-sm text-slate-400">
+                Letzte {DAYS_BACK} Tage · {badHabitDays} Tage über {SOCIAL_MEDIA_BAD_HABIT_THRESHOLD}h Social Media
               </p>
-              <p className="mt-3 text-sm text-slate-500">{trackerScoreMock.comment}</p>
-              <div className="mt-6 space-y-3">
-                {trackerScoreMock.breakdown.map((item) => (
-                  <div key={item.label} className="space-y-2">
-                    <div className="flex items-center justify-between text-sm text-slate-400">
-                      <span>{item.label}</span>
-                      <span>{item.value}</span>
-                    </div>
-                    <div className="h-2 overflow-hidden rounded-full bg-slate-800">
-                      <div className={`h-2 rounded-full bg-gradient-to-r ${item.color}`} style={{ width: `${item.percentage}%` }} />
-                    </div>
-                  </div>
-                ))}
-              </div>
             </div>
-
-            <div className="rounded-[28px] border border-slate-800 bg-slate-900 p-6 shadow-xl">
-              <p className="text-xs uppercase tracking-[0.25em] text-slate-400">Top Card</p>
-              <div className="mt-4 space-y-4">
-                <div className="rounded-3xl border border-slate-800 bg-slate-950 p-4">
-                  <p className="text-xs uppercase tracking-[0.24em] text-slate-400">Life Rank Theme</p>
-                  <p className="mt-3 text-xl font-semibold text-white">{lifeRankMock.theme}</p>
-                </div>
-                <div className="rounded-3xl border border-slate-800 bg-slate-950 p-4">
-                  <p className="text-xs uppercase tracking-[0.24em] text-slate-400">Peak</p>
-                  <p className="mt-3 text-xl font-semibold text-white">{lifeRankMock.peak}</p>
-                </div>
-              </div>
-            </div>
+            
+            {/* Interaktiver Steuerungs-Button für den AI Agenten */}
+            <button
+              onClick={handleTriggerAnalysis}
+              disabled={loadingAi}
+              className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-violet-600 to-emerald-600 hover:from-violet-500 hover:to-emerald-500 px-4 py-2.5 text-xs font-bold uppercase tracking-wider text-white shadow-lg transition-all active:scale-95 disabled:opacity-50"
+            >
+              {loadingAi ? (
+                <>
+                  <span className="h-3 w-3 animate-spin rounded-full border-2 border-white border-t-transparent" />
+                  Agent evaluiert...
+                </>
+              ) : (
+                <>
+                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="h-3.5 w-3.5">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904L9 21l-.813-5.096L3 15l5.096-.813L9 9l.813 5.096L15 15l-5.096.813zM18.75 5.25l-.45 2.25-.45-2.25L15.6 4.8l2.25-.45.45-2.25.45 2.25 2.25.45-2.25.45zM19.35 10.5l-.3 1.5-.3-1.5-1.5-.3 1.5-.3.3-1.5.3 1.5 1.5.3-1.5.3z" />
+                  </svg>
+                  Live Insights generieren
+                </>
+              )}
+            </button>
           </div>
         </section>
 
-        <section className="grid gap-6 xl:grid-cols-[1fr_420px]">
-          <div className="space-y-6">
-            {renderDomainCard(sportMock, <IconDumbbell />, 'bg-orange-500/10 text-orange-300')}
-            {renderDomainCard(uniMock, <IconBook />, 'bg-violet-500/10 text-violet-300')}
-            {renderDomainCard(sidehustleMock, <IconBriefcase />, 'bg-emerald-500/10 text-emerald-300')}
-          </div>
+        {/* Überlagerter Trend-Graph mit klickbarer Legende */}
+        <section className="rounded-2xl border border-slate-800 bg-slate-900 p-6 shadow-xl">
+          <h3 className="mb-4 text-sm font-bold uppercase tracking-wider text-slate-300">Trends im Vergleich</h3>
+          <CombinedTrendChart metrics={trendMetrics} />
+        </section>
 
-          <div className="space-y-6">
-            <div className="rounded-[32px] border border-slate-800 bg-slate-900 p-6 shadow-xl">
-              <div className="flex items-center justify-between gap-4">
-                <div>
-                  <p className="text-xs uppercase tracking-[0.24em] text-slate-400">Tracker Score</p>
-                  <h2 className="mt-2 text-3xl font-semibold text-white">
-                    {trackerScoreMock.total}
-                    <span className="text-slate-500">/{trackerScoreMock.max}</span>
-                  </h2>
-                </div>
-                <span className="rounded-full bg-cyan-500/10 px-3 py-1 text-xs uppercase tracking-[0.25em] text-cyan-300">Composite</span>
-              </div>
-              <p className="mt-4 text-sm text-slate-400">{trackerScoreMock.comment}</p>
-              <div className="mt-6 space-y-4">
-                {trackerScoreMock.breakdown.map((item) => (
-                  <div key={item.label}>
-                    <div className="mb-2 flex items-center justify-between text-sm text-slate-400">
-                      <span>{item.label}</span>
-                      <span>{item.value}</span>
-                    </div>
-                    <div className="h-2 overflow-hidden rounded-full bg-slate-800">
-                      <div className={`h-2 rounded-full bg-gradient-to-r ${item.color}`} style={{ width: `${item.percentage}%` }} />
-                    </div>
-                  </div>
-                ))}
-              </div>
+        {/* Domain-Bereiche: Schalten dynamisch auf echten Gemini-Agenten-Output um */}
+        <section className="grid gap-6 lg:grid-cols-3">
+          <DomainCard 
+            domain={aiDomains ? aiDomains.sport : sportMock} 
+            icon={<IconDumbbell />} 
+            badgeClass="bg-orange-500/10 text-orange-300" 
+          />
+          <DomainCard 
+            domain={aiDomains ? aiDomains.uni : uniMock} 
+            icon={<IconBook />} 
+            badgeClass="bg-violet-500/10 text-violet-300" 
+          />
+          <DomainCard 
+            domain={aiDomains ? aiDomains.sidehustle : sidehustleMock} 
+            icon={<IconBriefcase />} 
+            badgeClass="bg-emerald-500/10 text-emerald-300" 
+          />
+        </section>
+
+        <div className="grid gap-6 lg:grid-cols-[1fr_1fr]">
+          {/* Letzte Einträge */}
+          <section className="rounded-2xl border border-slate-800 bg-slate-900 p-6 shadow-xl">
+            <h3 className="mb-4 text-sm font-bold uppercase tracking-wider text-slate-300">Letzte Einträge</h3>
+            <div className="flex max-h-96 flex-col gap-2 overflow-y-auto pr-1">
+              {recentEntries.length > 0 ? (
+                recentEntries.map((entry) => <WellbeingRow key={entry.log_date} entry={entry} />)
+              ) : (
+                <p className="text-sm text-slate-500">Noch keine Daten vorhanden.</p>
+              )}
             </div>
+          </section>
 
-            <div className="rounded-[32px] border border-slate-800 bg-slate-900 p-6 shadow-xl">
-              <div className="mb-4 flex items-center justify-between gap-4">
-                <div>
-                  <p className="text-xs uppercase tracking-[0.24em] text-slate-400">Session Log</p>
-                  <h3 className="mt-2 text-2xl font-semibold text-white">Tägliche Übersicht</h3>
-                </div>
-                <span className="rounded-full bg-slate-800 px-3 py-1 text-xs uppercase tracking-[0.25em] text-slate-400">Letzte 5 Tage</span>
+          {/* Log-Formular */}
+          <section className="rounded-2xl border border-slate-800 bg-slate-900 p-6 shadow-xl">
+            <h2 className="text-sm font-bold uppercase tracking-wider text-cyan-400">Heute eintragen</h2>
+            <p className="mb-4 text-xs text-slate-400">Schlaf, Habits, Social-Media-Zeit und Mood für heute.</p>
+
+            <form onSubmit={handleSubmit} className="space-y-5">
+              <div>
+                <label className="mb-1 flex items-center justify-between text-xs font-semibold uppercase tracking-wide text-slate-400">
+                  <span>Schlaf (Stunden)</span>
+                  <span className="text-slate-200">{form.sleepHours}h</span>
+                </label>
+                <input
+                  type="range"
+                  min={0}
+                  max={12}
+                  step={0.5}
+                  value={form.sleepHours}
+                  onChange={(e) => setForm((prev) => ({ ...prev, sleepHours: Number(e.target.value) }))}
+                  className="w-full accent-cyan-500"
+                />
               </div>
 
-              <div className="space-y-3">
-                {sessionLog.map((entry) => (
-                  <div
-                    key={`${entry.date}-${entry.note}`}
-                    className="rounded-3xl border border-slate-800 bg-slate-950 p-4"
-                    style={{ borderLeft: `3px solid ${TONE_COLOR[entry.tone]}` }}
-                  >
-                    <div className="flex items-center justify-between gap-3 text-sm text-slate-500">
-                      <div className="flex items-center gap-2">
-                        <span className="text-lg">{entry.icon}</span>
-                        <span>{entry.date}</span>
-                        <span className="rounded-full bg-slate-800 px-2 py-1 text-[11px] uppercase tracking-[0.18em] text-slate-400">{entry.category}</span>
-                      </div>
-                      <span className="text-xs uppercase tracking-[0.2em]" style={{ color: TONE_COLOR[entry.tone] }}>
-                        {entry.status}
-                      </span>
-                    </div>
-                    <div className="mt-3 flex items-center justify-between gap-4 text-sm text-white">
-                      <span className="font-semibold">{entry.tag}</span>
-                      <span className="text-slate-400">{entry.ratio}</span>
-                    </div>
-                    <p className="mt-2 text-xs text-slate-500">{entry.note}</p>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            <div className="rounded-[32px] border border-slate-800 bg-slate-900 p-6 shadow-xl">
-              <h3 className="text-lg font-semibold text-white">Tages-Log</h3>
-              <p className="mt-2 text-sm text-slate-400">Fülle deinen täglichen Check-In aus und speichere ihn lokal oder per Supabase.</p>
-              <form onSubmit={handleSubmit} className="mt-5 space-y-4">
-                {habitConfig.map((habit) => (
-                  <label
-                    key={habit.id}
-                    className={`flex items-center gap-3 rounded-2xl border p-3 transition-all ${
-                      habits[habit.id] ? 'border-cyan-500 bg-slate-950' : 'border-slate-800 bg-slate-900 hover:border-slate-700'
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                {(
+                  [
+                    { key: 'didSport', label: 'Sport' },
+                    { key: 'deepWork', label: 'Deep Work' },
+                    { key: 'wasCreative', label: 'Kreativ' },
+                    { key: 'didRead', label: 'Lesen' },
+                  ] as const
+                ).map((habit) => (
+                  <button
+                    type="button"
+                    key={habit.key}
+                    onClick={() => setForm((prev) => ({ ...prev, [habit.key]: !prev[habit.key] }))}
+                    className={`rounded-lg border px-3 py-3 text-xs font-bold uppercase tracking-wide transition-all ${
+                      form[habit.key]
+                        ? 'border-emerald-500 bg-emerald-500/10 text-emerald-200'
+                        : 'border-slate-800 bg-slate-950 text-slate-400 hover:border-slate-700'
                     }`}
                   >
-                    <input
-                      type="checkbox"
-                      checked={habits[habit.id]}
-                      onChange={() => handleCheckboxChange(habit.id)}
-                      className="h-4 w-4 accent-cyan-500"
-                    />
-                    <div className="space-y-1">
-                      <p className="text-sm font-semibold text-white">{habit.label}</p>
-                      <p className="text-xs text-slate-500">{habit.desc}</p>
-                    </div>
-                  </label>
+                    {habit.label}
+                  </button>
                 ))}
+              </div>
 
-                <button
-                  type="submit"
-                  disabled={loading}
-                  className="w-full rounded-2xl bg-cyan-500 px-4 py-3 text-sm font-semibold uppercase tracking-[0.2em] text-slate-950 transition hover:bg-cyan-600 disabled:opacity-50"
-                >
-                  {loading ? 'Speichern…' : 'Logeintrag speichern'}
-                </button>
-              </form>
-              {statusMessage ? <p className="mt-4 text-sm text-slate-300">{statusMessage}</p> : null}
-            </div>
-          </div>
-        </section>
+              <div>
+                <label className="mb-1 flex items-center justify-between text-xs font-semibold uppercase tracking-wide text-slate-400">
+                  <span>Social Media (Stunden)</span>
+                  <span className={isSocialMediaHigh ? 'font-semibold text-rose-300' : 'text-slate-200'}>
+                    {form.socialMediaHours}h {isSocialMediaHigh ? '⚠️' : ''}
+                  </span>
+                </label>
+                <input
+                  type="range"
+                  min={0}
+                  max={8}
+                  step={0.5}
+                  value={form.socialMediaHours}
+                  onChange={(e) => setForm((prev) => ({ ...prev, socialMediaHours: Number(e.target.value) }))}
+                  className={`w-full ${isSocialMediaHigh ? 'accent-rose-500' : 'accent-cyan-500'}`}
+                />
+                {isSocialMediaHigh && (
+                  <p className="mt-1 text-[11px] text-rose-300">
+                    Über {SOCIAL_MEDIA_BAD_HABIT_THRESHOLD}h – wird als Bad Habit gezählt.
+                  </p>
+                )}
+              </div>
+
+              <div>
+                <label className="mb-1 flex items-center justify-between text-xs font-semibold uppercase tracking-wide text-slate-400">
+                  <span>Mood</span>
+                  <span className="text-slate-200">{form.mood} / 10</span>
+                </label>
+                <input
+                  type="range"
+                  min={1}
+                  max={10}
+                  step={1}
+                  value={form.mood}
+                  onChange={(e) => setForm((prev) => ({ ...prev, mood: Number(e.target.value) }))}
+                  className="w-full accent-violet-500"
+                />
+              </div>
+
+              <button
+                type="submit"
+                disabled={saving}
+                className="w-full rounded-lg bg-cyan-500 px-4 py-3 text-sm font-bold uppercase tracking-wider text-slate-950 transition-colors hover:bg-cyan-600 active:bg-cyan-700 disabled:opacity-50"
+              >
+                {saving ? 'Wird gespeichert…' : 'Eintrag speichern'}
+              </button>
+            </form>
+
+            {statusMessage && (
+              <p className="mt-3 text-center text-xs font-semibold tracking-wide text-slate-300">{statusMessage}</p>
+            )}
+          </section>
+        </div>
       </div>
     </main>
   );

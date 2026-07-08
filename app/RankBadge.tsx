@@ -1,4 +1,4 @@
-import type { RankTier } from '../lib/rank';
+import type { RankTier } from './rank';
 
 export default function RankBadge({ tier, size = 64 }: { tier: RankTier; size?: number }) {
   return (
