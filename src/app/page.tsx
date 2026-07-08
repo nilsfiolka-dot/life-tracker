@@ -1,7 +1,7 @@
 'use client';
 
-import { type FormEvent, useMemo, useState } from 'react';
-import { isSupabaseConfigured, logDailyMatch } from '../src/lib/supabaseClient';
+import { type FormEvent, useState } from 'react';
+import { isSupabaseConfigured, logDailyMatch } from '../lib/supabaseClient';
 import {
   lifeRankMock,
   sportMock,
@@ -9,12 +9,8 @@ import {
   sidehustleMock,
   trackerScoreMock,
   sessionLogMock,
-  type DomainMock,
   type SessionLogEntry,
-} from './dashboardMock';
-import { getRankForScore, getRankProgress } from './rank';
-import RankBadge from './RankBadge';
-import { IconDumbbell, IconBook, IconBriefcase } from './domain-icons';
+} from '../lib/dashboardMock';
 
 type HabitState = {
   survive: boolean;
@@ -29,21 +25,8 @@ type HabitConfig = {
   desc: string;
 };
 
-const TONE_COLOR: Record<SessionLogEntry['tone'], string> = {
-  great: '#22c55e',
-  good: '#38bdf8',
-  ok: '#f2c94c',
-  low: '#64748b',
-};
-
-// Tracker Score läuft 0–1000, die Rang-Schwellen in lib/rank.ts sind auf
-// den größeren Score der Match-Tracker-Seite ausgelegt (bis ~28000).
-// Hochskalieren, damit dieselben Rang-Farben/Stufen wiederverwendet werden können.
-const RANK_SCALE = 28;
-
-const renderMetric = (metric: { label: string; value: string; help?: string; trend?: string }, accent: string) => (
-  <div key={`${metric.label}-${metric.value}`} className="relative overflow-hidden rounded-3xl border border-slate-800 bg-slate-950 p-4">
-    <div className="absolute inset-x-0 top-0 h-0.5" style={{ backgroundColor: accent }} />
+const renderMetric = (metric: { label: string; value: string; help?: string; trend?: string }) => (
+  <div className="rounded-3xl border border-slate-800 bg-slate-950 p-4">
     <div className="flex items-center justify-between gap-4">
       <p className="text-xs uppercase tracking-[0.24em] text-slate-400">{metric.label}</p>
       {metric.trend ? (
@@ -52,37 +35,6 @@ const renderMetric = (metric: { label: string; value: string; help?: string; tre
     </div>
     <p className="mt-3 text-lg font-semibold text-white">{metric.value}</p>
     {metric.help ? <p className="mt-2 text-xs text-slate-500">{metric.help}</p> : null}
-  </div>
-);
-
-const renderDomainCard = (domain: DomainMock, icon: React.ReactNode, badgeClass: string) => (
-  <div className="rounded-[32px] border border-slate-800 bg-slate-900 p-6 shadow-xl">
-    <div className="mb-4 flex items-center justify-between gap-4">
-      <div className="flex items-center gap-3">
-        <span
-          className="flex h-9 w-9 items-center justify-center rounded-xl"
-          style={{ color: domain.accent, backgroundColor: `${domain.accent}1a` }}
-        >
-          {icon}
-        </span>
-        <div>
-          <p className="text-xs uppercase tracking-[0.24em] text-slate-400">{domain.title}</p>
-        </div>
-      </div>
-      <div className={`rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-[0.25em] ${badgeClass}`}>
-        {domain.scoreLabel}
-      </div>
-    </div>
-    <p className="text-sm text-slate-400">{domain.subtitle}</p>
-    <div className="mt-6 grid gap-4 sm:grid-cols-2">
-      {domain.metrics.map((metric) => renderMetric(metric, domain.accent))}
-    </div>
-    <div
-      className="mt-6 rounded-3xl border p-4 text-sm text-slate-300"
-      style={{ borderColor: `${domain.accent}33`, backgroundColor: `${domain.accent}0d` }}
-    >
-      {domain.highlight}
-    </div>
   </div>
 );
 
@@ -98,9 +50,6 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(false);
   const [statusMessage, setStatusMessage] = useState('');
   const [sessionLog, setSessionLog] = useState<SessionLogEntry[]>(sessionLogMock);
-
-  const rank = useMemo(() => getRankForScore(lifeRankMock.score * RANK_SCALE), []);
-  const rankProgress = useMemo(() => getRankProgress(lifeRankMock.score * RANK_SCALE), []);
 
   const handleCheckboxChange = (type: keyof HabitState) => {
     setHabits((prev) => ({ ...prev, [type]: !prev[type] }));
@@ -138,7 +87,6 @@ export default function DashboardPage() {
         tag: 'MVP',
         ratio: '5 / 1',
         note: 'Tageslog hinzugefügt',
-        tone: 'great',
       },
       ...prev.slice(0, 4),
     ]);
@@ -147,7 +95,7 @@ export default function DashboardPage() {
     setStatusMessage(
       !isSupabaseConfigured
         ? '📝 Match performance saved locally. Configure Supabase to sync to your database.'
-        : '🎯 Match performance successfully logged!',
+        : '🎯 Match performance successfully logged!'
     );
   };
 
@@ -162,41 +110,21 @@ export default function DashboardPage() {
     <main className="min-h-screen bg-slate-950 p-4 text-slate-100">
       <div className="mx-auto flex w-full max-w-7xl flex-col gap-6">
         <section className="grid gap-6 lg:grid-cols-[1.35fr_0.8fr]">
-          <div className="relative overflow-hidden rounded-[32px] border border-slate-800 bg-slate-900 p-8 shadow-xl">
-            <div
-              className="pointer-events-none absolute -right-24 -top-24 h-64 w-64 rounded-full blur-3xl"
-              style={{ backgroundColor: rank.glow }}
-            />
-            <div className="relative flex items-start justify-between gap-6">
-              <div className="flex items-start gap-5">
-                <RankBadge tier={rank} size={72} />
-                <div className="space-y-3">
-                  <p className="text-xs uppercase tracking-[0.3em] text-slate-500">Life Rank</p>
-                  <h1 className="text-4xl font-semibold tracking-tight text-white">{lifeRankMock.current}</h1>
-                  <p className="max-w-xl text-sm text-slate-400">{lifeRankMock.description}</p>
-                  {rankProgress.next && (
-                    <div className="max-w-xs">
-                      <div className="h-1.5 overflow-hidden rounded-full bg-slate-800">
-                        <div
-                          className="h-full rounded-full"
-                          style={{ width: `${rankProgress.progress * 100}%`, backgroundColor: rank.color }}
-                        />
-                      </div>
-                      <p className="mt-1 text-[11px] text-slate-500">Nächste Stufe: {rankProgress.next.name}</p>
-                    </div>
-                  )}
-                </div>
+          <div className="rounded-[32px] border border-slate-800 bg-slate-900 p-8 shadow-xl">
+            <div className="flex items-start justify-between gap-6">
+              <div className="space-y-4">
+                <p className="text-xs uppercase tracking-[0.3em] text-slate-500">Life Rank</p>
+                <h1 className="text-4xl font-semibold tracking-tight text-white">{lifeRankMock.current}</h1>
+                <p className="max-w-xl text-sm text-slate-400">{lifeRankMock.description}</p>
               </div>
               <div className="rounded-3xl border border-slate-800 bg-slate-950 p-4 text-right">
                 <p className="text-xs uppercase tracking-[0.3em] text-slate-500">Peak Rating</p>
-                <p className="mt-2 text-2xl font-bold" style={{ color: rank.color }}>
-                  {lifeRankMock.peak}
-                </p>
+                <p className="mt-2 text-2xl font-bold text-cyan-300">{lifeRankMock.peak}</p>
                 <p className="mt-1 text-xs text-slate-500">Best ever Woche</p>
               </div>
             </div>
 
-            <div className="relative mt-8 grid gap-4 sm:grid-cols-2">
+            <div className="mt-8 grid gap-4 sm:grid-cols-2">
               <div className="rounded-3xl bg-gradient-to-br from-cyan-500/15 to-slate-900 border border-cyan-500/20 p-5 shadow-inner">
                 <p className="text-xs uppercase tracking-[0.24em] text-slate-400">Composite Score</p>
                 <p className="mt-3 text-4xl font-semibold text-white">{formatScore(lifeRankMock.score)}</p>
@@ -221,10 +149,7 @@ export default function DashboardPage() {
           <div className="space-y-6">
             <div className="rounded-[28px] border border-slate-800 bg-slate-900 p-6 shadow-xl">
               <p className="text-xs uppercase tracking-[0.25em] text-slate-400">Tracker Score</p>
-              <p className="mt-4 text-5xl font-semibold text-white">
-                {trackerScoreMock.total}
-                <span className="text-slate-500">/{trackerScoreMock.max}</span>
-              </p>
+              <p className="mt-4 text-5xl font-semibold text-white">{trackerScoreMock.total}<span className="text-slate-500">/{trackerScoreMock.max}</span></p>
               <p className="mt-3 text-sm text-slate-500">{trackerScoreMock.comment}</p>
               <div className="mt-6 space-y-3">
                 {trackerScoreMock.breakdown.map((item) => (
@@ -259,9 +184,62 @@ export default function DashboardPage() {
 
         <section className="grid gap-6 xl:grid-cols-[1fr_420px]">
           <div className="space-y-6">
-            {renderDomainCard(sportMock, <IconDumbbell />, 'bg-orange-500/10 text-orange-300')}
-            {renderDomainCard(uniMock, <IconBook />, 'bg-violet-500/10 text-violet-300')}
-            {renderDomainCard(sidehustleMock, <IconBriefcase />, 'bg-emerald-500/10 text-emerald-300')}
+            <div className="rounded-[32px] border border-slate-800 bg-slate-900 p-6 shadow-xl">
+              <div className="mb-4 flex items-center justify-between gap-4">
+                <div>
+                  <p className="text-xs uppercase tracking-[0.24em] text-slate-400">Sport</p>
+                  <h2 className="mt-2 text-2xl font-semibold text-white">{sportMock.title}</h2>
+                </div>
+                <div className="rounded-full bg-emerald-500/10 px-3 py-1 text-xs font-semibold uppercase tracking-[0.25em] text-emerald-300">
+                  {sportMock.scoreLabel}
+                </div>
+              </div>
+              <p className="text-sm text-slate-400">{sportMock.subtitle}</p>
+              <div className="mt-6 grid gap-4 sm:grid-cols-2">
+                {sportMock.metrics.map((metric) => renderMetric(metric))}
+              </div>
+              <div className="mt-6 rounded-3xl border border-slate-800 bg-slate-950 p-4 text-sm text-slate-400">
+                {sportMock.highlight}
+              </div>
+            </div>
+
+            <div className="rounded-[32px] border border-slate-800 bg-slate-900 p-6 shadow-xl">
+              <div className="mb-4 flex items-center justify-between gap-4">
+                <div>
+                  <p className="text-xs uppercase tracking-[0.24em] text-slate-400">Uni (Master)</p>
+                  <h2 className="mt-2 text-2xl font-semibold text-white">{uniMock.title}</h2>
+                </div>
+                <div className="rounded-full bg-violet-500/10 px-3 py-1 text-xs font-semibold uppercase tracking-[0.25em] text-violet-300">
+                  {uniMock.scoreLabel}
+                </div>
+              </div>
+              <p className="text-sm text-slate-400">{uniMock.subtitle}</p>
+              <div className="mt-6 grid gap-4 sm:grid-cols-2">
+                {uniMock.metrics.map((metric) => renderMetric(metric))}
+              </div>
+              <div className="mt-6 rounded-3xl border border-slate-800 bg-slate-950 p-4 text-sm text-slate-400">
+                {uniMock.highlight}
+              </div>
+            </div>
+
+            <div className="rounded-[32px] border border-slate-800 bg-slate-900 p-6 shadow-xl">
+              <div className="mb-4 flex items-center justify-between gap-4">
+                <div>
+                  <p className="text-xs uppercase tracking-[0.24em] text-slate-400">Sidehustle</p>
+                  <h2 className="mt-2 text-2xl font-semibold text-white">{sidehustleMock.title}</h2>
+                </div>
+                <div className="rounded-full bg-emerald-500/10 px-3 py-1 text-xs font-semibold uppercase tracking-[0.25em] text-emerald-300">
+                  {sidehustleMock.scoreLabel}
+                </div>
+              </div>
+              <p className="text-sm text-slate-400">{sidehustleMock.subtitle}</p>
+              <div className="mt-6 grid gap-4 sm:grid-cols-2">
+                {sidehustleMock.metrics.map((metric) => renderMetric(metric))}
+              </div>
+              <div className="mt-6 rounded-3xl border border-slate-800 bg-slate-950 p-4 text-sm text-slate-400">
+                {sidehustleMock.highlight}
+              </div>
+            </div>
           </div>
 
           <div className="space-y-6">
@@ -269,10 +247,7 @@ export default function DashboardPage() {
               <div className="flex items-center justify-between gap-4">
                 <div>
                   <p className="text-xs uppercase tracking-[0.24em] text-slate-400">Tracker Score</p>
-                  <h2 className="mt-2 text-3xl font-semibold text-white">
-                    {trackerScoreMock.total}
-                    <span className="text-slate-500">/{trackerScoreMock.max}</span>
-                  </h2>
+                  <h2 className="mt-2 text-3xl font-semibold text-white">{trackerScoreMock.total}<span className="text-slate-500">/{trackerScoreMock.max}</span></h2>
                 </div>
                 <span className="rounded-full bg-cyan-500/10 px-3 py-1 text-xs uppercase tracking-[0.25em] text-cyan-300">Composite</span>
               </div>
@@ -303,20 +278,14 @@ export default function DashboardPage() {
 
               <div className="space-y-3">
                 {sessionLog.map((entry) => (
-                  <div
-                    key={`${entry.date}-${entry.note}`}
-                    className="rounded-3xl border border-slate-800 bg-slate-950 p-4"
-                    style={{ borderLeft: `3px solid ${TONE_COLOR[entry.tone]}` }}
-                  >
+                  <div key={`${entry.date}-${entry.note}`} className="rounded-3xl border border-slate-800 bg-slate-950 p-4">
                     <div className="flex items-center justify-between gap-3 text-sm text-slate-500">
                       <div className="flex items-center gap-2">
                         <span className="text-lg">{entry.icon}</span>
                         <span>{entry.date}</span>
                         <span className="rounded-full bg-slate-800 px-2 py-1 text-[11px] uppercase tracking-[0.18em] text-slate-400">{entry.category}</span>
                       </div>
-                      <span className="text-xs uppercase tracking-[0.2em]" style={{ color: TONE_COLOR[entry.tone] }}>
-                        {entry.status}
-                      </span>
+                      <span className="text-xs uppercase tracking-[0.2em] text-slate-400">{entry.status}</span>
                     </div>
                     <div className="mt-3 flex items-center justify-between gap-4 text-sm text-white">
                       <span className="font-semibold">{entry.tag}</span>
