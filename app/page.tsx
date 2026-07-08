@@ -16,6 +16,19 @@ import CombinedTrendChart, { type TrendMetricConfig } from './components/Combine
 import DomainCard from './components/DomainCard';
 import WellbeingRow from './components/WellbeingRow';
 import { IconDumbbell, IconBook, IconBriefcase } from './components/domain-icons';
+import {
+  fetchTodos,
+  createTodo,
+  updateTodo,
+  deleteTodo,
+  type TodoItem,
+  type TodoDomain,
+  type TodoPriority,
+} from './lib/todosClient';
+import TodoList from './components/TodoList';
+import DomainTabs from './components/DomainTabs';
+import RecommendationsPanel from './components/RecommendationsPanel';
+import { generateRecommendations } from './lib/recommendations';
 
 interface FormState {
   sleepHours: number;
@@ -49,6 +62,46 @@ export default function WellbeingPage() {
   // Korrigiert: State hält das strukturierte AI-Objekt für alle 3 Domänen
   const [aiDomains, setAiDomains] = useState<any | null>(null);
   const [loadingAi, setLoadingAi] = useState(false);
+
+  const [todos, setTodos] = useState<TodoItem[]>([]);
+
+useEffect(() => {
+  void (async () => setTodos(await fetchTodos()))();
+}, []);
+
+const handleAddTodo = async (text: string, domain: TodoDomain, priority: TodoPriority) => {
+  const { todo } = await createTodo(text, domain, priority);
+  if (todo) setTodos((prev) => [...prev, todo]);
+};
+
+const handleToggleTodo = async (id: string, completed: boolean) => {
+  setTodos((prev) => prev.map((t) => (t.id === id ? { ...t, completed } : t)));
+  await updateTodo(id, { completed });
+};
+
+const handleEditTodo = async (id: string, text: string) => {
+  setTodos((prev) => prev.map((t) => (t.id === id ? { ...t, text } : t)));
+  await updateTodo(id, { text });
+};
+
+const handleDeleteTodo = async (id: string) => {
+  setTodos((prev) => prev.filter((t) => t.id !== id));
+  await deleteTodo(id);
+};
+
+const activeDomains = useMemo(
+  () => ({
+    sport: aiDomains ? aiDomains.sport : sportMock,
+    uni: aiDomains ? aiDomains.uni : uniMock,
+    sidehustle: aiDomains ? aiDomains.sidehustle : sidehustleMock,
+  }),
+  [aiDomains],
+);
+
+const recommendations = useMemo(
+  () => generateRecommendations(activeDomains, todos),
+  [activeDomains, todos],
+);
 
   useEffect(() => {
     const load = async () => {
@@ -242,43 +295,30 @@ export default function WellbeingPage() {
         </section>
 
         {/* Domain-Bereiche: Schalten dynamisch auf echten Gemini-Agenten-Output um */}
-        <section className="grid gap-6 lg:grid-cols-3">
-          <DomainCard 
-            domain={aiDomains ? aiDomains.sport : sportMock} 
-            icon={<IconDumbbell />} 
-            badgeClass="bg-orange-500/10 text-orange-300" 
-          />
-          <DomainCard 
-            domain={aiDomains ? aiDomains.uni : uniMock} 
-            icon={<IconBook />} 
-            badgeClass="bg-violet-500/10 text-violet-300" 
-          />
-          <DomainCard 
-            domain={aiDomains ? aiDomains.sidehustle : sidehustleMock} 
-            icon={<IconBriefcase />} 
-            badgeClass="bg-emerald-500/10 text-emerald-300" 
-          />
-        </section>
+        <DomainTabs
+          sport={activeDomains.sport}
+          uni={activeDomains.uni}
+          sidehustle={activeDomains.sidehustle}
+          icons={{ sport: <IconDumbbell />, uni: <IconBook />, sidehustle: <IconBriefcase /> }}
+        />
 
-        <div className="grid gap-6 lg:grid-cols-[1fr_1fr]">
-          {/* Letzte Einträge */}
-          <section className="rounded-2xl border border-slate-800 bg-slate-900 p-6 shadow-xl">
-            <h3 className="mb-4 text-sm font-bold uppercase tracking-wider text-slate-300">Letzte Einträge</h3>
-            <div className="flex max-h-96 flex-col gap-2 overflow-y-auto pr-1">
-              {recentEntries.length > 0 ? (
-                recentEntries.map((entry) => <WellbeingRow key={entry.log_date} entry={entry} />)
-              ) : (
-                <p className="text-sm text-slate-500">Noch keine Daten vorhanden.</p>
-              )}
-            </div>
-          </section>
+        <RecommendationsPanel recommendations={recommendations} />
 
-          {/* Log-Formular */}
-          <section className="rounded-2xl border border-slate-800 bg-slate-900 p-6 shadow-xl">
-            <h2 className="text-sm font-bold uppercase tracking-wider text-cyan-400">Heute eintragen</h2>
-            <p className="mb-4 text-xs text-slate-400">Schlaf, Habits, Social-Media-Zeit und Mood für heute.</p>
+        <div className="grid gap-6 lg:grid-cols-2">
+  <TodoList
+    todos={todos}
+    onAdd={handleAddTodo}
+    onToggle={handleToggleTodo}
+    onEdit={handleEditTodo}
+    onDelete={handleDeleteTodo}
+  />
 
-            <form onSubmit={handleSubmit} className="space-y-5">
+  {/* Log-Formular */}
+  <section className="rounded-2xl border border-slate-800 bg-slate-900 p-6 shadow-xl">
+    <h2 className="text-sm font-bold uppercase tracking-wider text-cyan-400">Heute eintragen</h2>
+    <p className="mb-4 text-xs text-slate-400">Schlaf, Habits, Social-Media-Zeit und Mood für heute.</p>
+
+    <form onSubmit={handleSubmit} className="space-y-5">
               <div>
                 <label className="mb-1 flex items-center justify-between text-xs font-semibold uppercase tracking-wide text-slate-400">
                   <span>Schlaf (Stunden)</span>
@@ -367,12 +407,24 @@ export default function WellbeingPage() {
               </button>
             </form>
 
-            {statusMessage && (
-              <p className="mt-3 text-center text-xs font-semibold tracking-wide text-slate-300">{statusMessage}</p>
-            )}
-          </section>
+    {statusMessage && (
+      <p className="mt-3 text-center text-xs font-semibold tracking-wide text-slate-300">{statusMessage}</p>
+    )}
+  </section>
+</div>
+
+{/* Letzte Einträge — volle Breite */}
+<section className="rounded-2xl border border-slate-800 bg-slate-900 p-6 shadow-xl">
+  <h3 className="mb-4 text-sm font-bold uppercase tracking-wider text-slate-300">Letzte Einträge</h3>
+  <div className="flex max-h-96 flex-col gap-2 overflow-y-auto pr-1">
+    {recentEntries.length > 0 ? (
+      recentEntries.map((entry) => <WellbeingRow key={entry.log_date} entry={entry} />)
+    ) : (
+      <p className="text-sm text-slate-500">Noch keine Daten vorhanden.</p>
+    )}
+  </div>
+</section>
         </div>
-      </div>
     </main>
   );
 }
