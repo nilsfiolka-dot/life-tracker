@@ -13,7 +13,6 @@ import { generateMockWellbeingLogs } from './lib/wellbeingMock';
 import { isSupabaseConfigured } from './lib/supabaseClient';
 import { sportMock, uniMock, sidehustleMock } from './dashboardMock';
 import CombinedTrendChart, { type TrendMetricConfig } from './components/CombinedTrendChart';
-import DomainCard from './components/DomainCard';
 import WellbeingRow from './components/WellbeingRow';
 import { IconDumbbell, IconBook, IconBriefcase } from './components/domain-icons';
 import {
@@ -29,6 +28,9 @@ import TodoList from './components/TodoList';
 import DomainTabs from './components/DomainTabs';
 import RecommendationsPanel from './components/RecommendationsPanel';
 import { generateRecommendations } from './lib/recommendations';
+import { getRandomQuote, type MotivationalQuote } from './lib/quotes';
+import MomentumLogo from './components/MomentumLogo';
+import { playfairDisplay } from './lib/fonts';
 
 interface FormState {
   sleepHours: number;
@@ -64,9 +66,14 @@ export default function WellbeingPage() {
   const [loadingAi, setLoadingAi] = useState(false);
 
   const [todos, setTodos] = useState<TodoItem[]>([]);
+  const [headerQuote, setHeaderQuote] = useState<MotivationalQuote | null>(null);
 
 useEffect(() => {
   void (async () => setTodos(await fetchTodos()))();
+}, []);
+
+useEffect(() => {
+  setHeaderQuote(getRandomQuote());
 }, []);
 
 const handleAddTodo = async (text: string, domain: TodoDomain, priority: TodoPriority) => {
@@ -255,16 +262,39 @@ const recommendations = useMemo(
   return (
     <main className="min-h-screen bg-[#0b0e14] p-4 text-slate-100 sm:p-6">
       <div className="mx-auto flex w-full max-w-6xl flex-col gap-6">
-        <section className="rounded-2xl border border-slate-800 bg-gradient-to-br from-slate-900 to-slate-950 p-6 shadow-xl">
-          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <p className="text-xs uppercase tracking-[0.25em] text-slate-500">Wellbeing Tracker</p>
-              <h1 className="mt-1 text-2xl font-bold text-white">Mood, Schlaf & Habits im Blick</h1>
-              <p className="mt-1 text-sm text-slate-400">
-                Letzte {DAYS_BACK} Tage · {badHabitDays} Tage über {SOCIAL_MEDIA_BAD_HABIT_THRESHOLD}h Social Media
-              </p>
+        <section className="relative overflow-hidden rounded-2xl border border-slate-800 bg-gradient-to-br from-slate-900 to-slate-950 p-6 shadow-xl sm:p-10">
+          {/* Giant faint wordmark filling the background */}
+          <div
+            aria-hidden="true"
+            className="pointer-events-none absolute inset-0 flex items-center overflow-hidden select-none"
+          >
+            <span
+              className={`${playfairDisplay.className} -ml-2 whitespace-nowrap text-[6rem] italic font-bold leading-none text-white/[0.05] sm:-ml-3 sm:text-[9rem] lg:text-[11rem]`}
+            >
+              Momentum
+            </span>
+          </div>
+
+          <div className="relative z-10 flex flex-col gap-8 sm:flex-row sm:items-end sm:justify-between">
+            <div className="min-w-0 max-w-2xl">
+              <div className="mb-5">
+                <MomentumLogo size="sm" tone="white" />
+              </div>
+
+              {headerQuote ? (
+                <blockquote>
+                  <p className="text-xl italic leading-relaxed text-slate-200 sm:text-2xl lg:text-3xl">
+                    &ldquo;{headerQuote.text}&rdquo;
+                  </p>
+                  <footer className="mt-3 text-xs font-semibold uppercase tracking-[0.25em] text-slate-500">
+                    — {headerQuote.author}
+                  </footer>
+                </blockquote>
+              ) : (
+                <div className="h-16 w-80 animate-pulse rounded bg-slate-800/40" />
+              )}
             </div>
-            
+
             {/* Interaktiver Steuerungs-Button für den AI Agenten */}
             <button
               onClick={handleTriggerAnalysis}
